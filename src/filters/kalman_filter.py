@@ -217,11 +217,17 @@ def linear_prediction_step(
     Gaussian
         Predicted state belief.
     """
+    # Prior statistics
+    m_prev = X_prior.mean
+    C_prev = X_prior.cov
     
-    prediction_mean = model.A @ X_prior.mean
-    prediction_cov  = model.A @ X_prior.cov @ model.A.T + model.Q
+    # Mean propagation
+    m_pred = model.A @ m_prev
+
+    # Covariance propagation
+    C_pred = model.A @ C_prev @ model.A.T + model.Q
     
-    return Gaussian(prediction_mean, prediction_cov)
+    return Gaussian(m_pred, C_pred)
 
 def linear_update_step(
     y_measurement   :   np.ndarray,
@@ -249,14 +255,25 @@ def linear_update_step(
         Updated (posterior) state belief.
     """
     
-    U = X_predicted.cov @ model.H.T
-    S = model.H @ X_predicted.cov @ model.H.T + model.R
-    mu = model.H @ X_predicted.mean
+    # Predicted statistics
+    m_pred = X_predicted.mean
+    C_pred = X_predicted.cov
     
-    update_mean = X_predicted.mean + U @ np.linalg.solve(S, y_measurement - mu)
-    update_cov = X_predicted.cov - U @ np.linalg.solve(S, U.T)
+    # Predicted measurement mean
+    mu = model.H @ m_pred
     
-    return Gaussian(update_mean, update_cov)
+    # Innovation statistics
+    U = C_pred @ model.H.T
+    S = model.H @ C_pred @ model.H.T + model.R
+    
+    # Measurement innovation
+    innovation = y_measurement - mu
+    
+    # Posterior update
+    m_post = m_pred+ U @ np.linalg.solve(S, innovation)
+    C_post = C_pred - U @ np.linalg.solve(S, U.T)
+    
+    return Gaussian(m_post, C_post)
 
 
 def run_kalman_filter(
@@ -285,42 +302,48 @@ def run_kalman_filter(
         Filtered means, covariances, and standard deviations over time.
     """
     
-    N = y_Observations.times.shape[0]
-    n = X0.mean.shape[0]                # dimension of the state
-    m = y_Observations.obs.shape[1]     # dimension of the measurement
+    # Dimensions
+    N = y_Observations.times.shape[0]   # number of time steps
+    n = X0.mean.shape[0]                # state dimension
+    # m = y_Observations.obs.shape[1]     # dimension of the measurement
     
-    # storage
+    # Allocate storage
     means_store = np.zeros((N, n))
     covs_store = np.zeros((N, n, n))
     stds_store = np.zeros((N, n))
     
-    # store Initial State
+    # Initialize with prior
     means_store[0] = np.copy(X0.mean)
     covs_store[0] = np.copy(X0.cov)
     stds_store[0] = np.sqrt(np.diag(covs_store[0, :, :]))
     
-    #Loop over all time steps
-    X_previous = Gaussian(np.copy(X0.mean), np.copy(X0.cov))
+    # Current filtering state
+    X_curr = Gaussian(np.copy(X0.mean), np.copy(X0.cov))
     obs_counter = 0
+    
+    # Main KF loop
     for k in range(1, N):
         # predict X_k state
-        X_prediction = linear_prediction_step(model, X_previous)
+        X_pred = linear_prediction_step(model, X_curr)
         
         # We have an observation so an update must occur
         if obs_counter < len(y_Observations.obs_ind) and k == y_Observations.obs_ind[obs_counter]:
             y_k = y_Observations.obs[obs_counter]
-            X_update = linear_update_step(y_k, model, X_prediction)
+            
+            # update 
+            X_post = linear_update_step(y_k, model, X_pred)
+            
             obs_counter +=1
             
-            X_previous = X_update
+            X_curr = X_post
         
-        # else we are just propagating the uncertanity forward
+        # else we are just propagating the uncertainty forward
         else:
-            X_previous = X_prediction
+            X_curr = X_pred
             
-        # store Initial State
-        means_store[k] = np.copy(X_previous.mean)
-        covs_store[k] = np.copy(X_previous.cov)
+        # store state
+        means_store[k] = np.copy(X_curr.mean)
+        covs_store[k] = np.copy(X_curr.cov)
         stds_store[k] = np.sqrt(np.diag(covs_store[k, :, :]))
         
     return KFTracker(means_store, covs_store, stds_store)
