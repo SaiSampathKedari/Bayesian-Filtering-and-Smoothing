@@ -160,11 +160,11 @@ def run_extended_kalman_filter(
             y_k = y_Observations.obs[obs_counter]
             
             # update 
-            X_update = ekf_update_step(y_k, model, X_pred)
+            X_post = ekf_update_step(y_k, model, X_pred)
             
             obs_counter += 1
             
-            X_curr = X_update
+            X_curr = X_post
         
         # else we are just propagating the uncertainty forward
         else:
