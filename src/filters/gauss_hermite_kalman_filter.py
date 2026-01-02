@@ -300,9 +300,9 @@ def run_gauss_hermite_kalman_filter(
     stds_store  = np.zeros((N, n))
 
     # Initialize with prior
-    means_store[0] = X0.mean
-    covs_store[0]  = X0.cov
-    stds_store[0]  = np.sqrt(np.diag(X0.cov))
+    means_store[0] = np.copy(X0.mean)
+    covs_store[0] = np.copy(X0.cov)
+    stds_store[0] = np.sqrt(np.diag(covs_store[0, :, :]))
 
     # Current filtering state
     X_curr = Gaussian(X0.mean.copy(), X0.cov.copy())
