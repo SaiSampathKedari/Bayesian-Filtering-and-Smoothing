@@ -1,8 +1,7 @@
 import numpy as np
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional, Callable
-
-import matplotlib.pyplot as plt
 
 from filters.kalman_filter import *
 
@@ -73,7 +72,188 @@ class ParticleSet:
         """
         self.normalize()
         return 1.0/np.sum( self.weights**2)
+
+
+class ParticleFilterModel(ABC):
+    """
+    Abstract interface for a particle filter variant.
+
+    Any PF variant must define how to:
+      - initialize particles
+      - propagate (predict)
+      - incorporate a measurement (update)
+
+    Resampling is kept outside to stay identical across variants.
+    """
     
+    ess_threshold_ratio: float = 0.5
+    
+    @abstractmethod
+    def pf_initialization_step(
+        self,
+        num_particles: int,
+        rng: np.random.Generator
+    ) -> ParticleSet:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def pf_prediction_step(
+        self,
+        particle_set_prev: ParticleSet,
+        rng: np.random.Generator
+    ) -> ParticleSet:
+        raise NotImplementedError
+    
+    @abstractmethod
+    def pf_update_step(
+        self,
+        y_observation: np.ndarray,
+        particle_set_curr: ParticleSet
+    ) -> ParticleSet:
+        raise NotImplementedError
+    
+
+def pf_resample_step(
+    particle_set_prev   :   ParticleSet,
+    rng         :   np.random.Generator
+) -> ParticleSet:
+    """
+    Resampling step of the particle filter.
+
+    Performs systematic resampling on trajectory space to combat
+    weight degeneracy. Entire trajectories are resampled according
+    to their importance weights.
+
+    After resampling:
+      - The number of particles remains unchanged.
+      - All resampled trajectories are assigned uniform weights.
+      - The empirical distribution is preserved in expectation.
+    """
+    
+    # Ensure weights form a valid probability distribution
+    particle_set_prev.normalize()
+    
+    X = particle_set_prev.particles  # (N, T, d)
+    w = particle_set_prev.weights    # (N,)
+    N = X.shape[0]
+    
+    # Systematic resampling grid
+    # One random offset shared across all particles
+    positions = (rng.random() + np.arange(N)) / N
+    
+    # Cumulative distribution function of weights
+    cdf = np.cumsum(w)
+    
+    # Numerical safety: ensure final CDF value is exactly 1
+    # Prevents out-of-bounds indexing due to floating point error
+    cdf[-1] = 1.0
+
+    # Indices of selected trajectories
+    idx = np.zeros(N, dtype=int)
+    
+    
+    i = 0   # index over resampling positions
+    j = 0   # index over CDF bins
+    while i < N:
+        if positions[i] < cdf[j]:
+            idx[i] = j
+            i += 1
+        else:
+            j += 1
+
+    # Return resampled particle set with uniform weights
+    return ParticleSet(
+        particles=X[idx].copy(),
+        weights=np.full(N, 1.0 / N)
+    )
+
+
+def run_particle_filter(
+    y_observations  :   Observations,
+    model           :   ParticleFilterModel,
+    num_particles   :   int,
+    rng             :   np.random.Generator
+)->ParticleSet:
+    """
+    Run a particle filter over a full time horizon.
+
+    The algorithm operates on trajectory space and consists of:
+      - initialization
+      - repeated prediction (proposal sampling)
+      - optional weight updates when measurements are available
+      - adaptive resampling based on effective sample size
+
+    The returned ParticleSet represents an empirical approximation
+    of the smoothing distribution at the final time step.
+    
+    Generic PF runner. Works for any model implementing ParticleFilterModel.
+    """
+    
+    # Total number of discrete time steps
+    T_total = y_observations.times.shape[0]
+    
+    # --------------------------------------------------
+    # 1) Initialization
+    # --------------------------------------------------
+    particle_set = model.pf_initialization_step(
+                                             num_particles=num_particles,
+                                             rng=rng)
+    
+    obs_counter = 0     # index over available measurements
+    
+    
+    # --------------------------------------------------
+    # 2) Main filtering loop
+    # --------------------------------------------------
+    for k in range(1, T_total):
+        
+        # 2) Prediction: extend each trajectory by one state
+        particle_set = model.pf_prediction_step(
+                            particle_set_prev=particle_set,
+                            rng=rng)
+        
+        # 3) Update weights if a measurement is available at this time
+        if obs_counter < len(y_observations.obs_ind) and k == y_observations.obs_ind[obs_counter]:
+            y_k = y_observations.obs[obs_counter]
+            
+            particle_set = model.pf_update_step(y_observation=y_k,
+                                              particle_set_curr=particle_set)
+            obs_counter += 1
+        
+        # 4) Resample if particle degeneracy is detected
+        if particle_set.ess() < model.ess_threshold_ratio * num_particles:
+            particle_set = pf_resample_step(particle_set_prev=particle_set, rng=rng) 
+    
+    return particle_set
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 @dataclass
 class ParticleFilterModel:
     """
@@ -146,7 +326,8 @@ class ParticleFilterModel:
     Resampling is triggered when the effective sample size falls below
     ess_threshold_ratio times the number of particles.
     """
-    
+
+
 def pf_initialization_step(
     model           :   ParticleFilterModel,
     num_particles   :   int, 
@@ -277,110 +458,3 @@ def pf_update_step(
     updated_particleSet.normalize()
     
     return updated_particleSet
-
-def pf_resample_step(
-    particleSet_curr   :   ParticleSet,
-    rng         :   np.random.Generator
-) -> ParticleSet:
-    """
-    Resampling step of the particle filter.
-
-    Performs systematic resampling on trajectory space to combat
-    weight degeneracy. Entire trajectories are resampled according
-    to their importance weights.
-
-    After resampling:
-      - The number of particles remains unchanged.
-      - All resampled trajectories are assigned uniform weights.
-      - The empirical distribution is preserved in expectation.
-    """
-    
-    # Ensure weights form a valid probability distribution
-    particleSet_curr.normalize()
-    
-    X = particleSet_curr.particles  # (N, T, d)
-    w = particleSet_curr.weights    # (N,)
-    N = X.shape[0]
-    
-    # Systematic resampling grid
-    # One random offset shared across all particles
-    positions = (rng.random() + np.arange(N)) / N
-    
-    # Cumulative distribution function of weights
-    cdf = np.cumsum(w)
-    
-    # Numerical safety: ensure final CDF value is exactly 1
-    # Prevents out-of-bounds indexing due to floating point error
-    cdf[-1] = 1.0
-
-    # Indices of selected trajectories
-    idx = np.zeros(N, dtype=int)
-    
-    
-    i = 0   # index over resampling positions
-    j = 0   # index over CDF bins
-    while i < N:
-        if positions[i] < cdf[j]:
-            idx[i] = j
-            i += 1
-        else:
-            j += 1
-
-    # Return resampled particle set with uniform weights
-    return ParticleSet(
-        particles=X[idx].copy(),
-        weights=np.full(N, 1.0 / N)
-    )
-
-
-def run_particle_filter(
-    y_observations  :   Observations,
-    model           :   ParticleFilterModel, 
-    num_particles   :   int,
-    rng             :   np.random.Generator
-)->ParticleSet:
-    """
-    Run a particle filter over a full time horizon.
-
-    The algorithm operates on trajectory space and consists of:
-      - initialization
-      - repeated prediction (proposal sampling)
-      - optional weight updates when measurements are available
-      - adaptive resampling based on effective sample size
-
-    The returned ParticleSet represents an empirical approximation
-    of the smoothing distribution at the final time step.
-    """
-    
-    # Total number of discrete time steps
-    T_total = y_observations.times.shape[0]
-    
-    # 1) Initialize particle trajectories at time k = 0
-    particleSet_curr = pf_initialization_step(model=model,
-                                             num_particles=num_particles,
-                                             rng=rng)
-    
-    obs_counter = 0     # index over available measurements
-    
-    # Main particle filter loop
-    for k in range(1, T_total):
-        
-        # 2) Prediction: extend each trajectory by one state
-        particleSet_curr = pf_prediction_step(model=model,
-                                             particleset_prev=particleSet_curr,
-                                             rng=rng)
-        
-        # 3) Update weights if a measurement is available at this time
-        if obs_counter < len(y_observations.obs_ind) and k == y_observations.obs_ind[obs_counter]:
-            y_k = y_observations.obs[obs_counter]
-            
-            particleSet_curr = pf_update_step(y_observation=y_k,
-                                              model=model,
-                                              particleSet_curr=particleSet_curr)
-            obs_counter += 1
-        
-        # 4) Resample if particle degeneracy is detected
-        if particleSet_curr.ess() < model.ess_threshold_ratio * num_particles:
-            particleSet_curr = pf_resample_step(particleSet_curr=particleSet_curr, rng=rng) 
-    
-    return particleSet_curr
