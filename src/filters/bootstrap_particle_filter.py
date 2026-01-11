@@ -65,8 +65,8 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         d = x0_0.shape[0]
         
         # Allocate storage for trajectories and weights
-        particles = np.empty((num_particles, 1, d))
-        weights = np.full(num_particles, 1.0/num_particles)
+        particles = np.empty((num_particles, 1, d), dtype=float)
+        weights   = np.full((num_particles, 1), 1.0 / num_particles)
         
         # Store first sampled particle
         particles[0, 0, :] = np.copy(x0_0)
@@ -104,8 +104,13 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         
         N, T, d = prev_particles.shape
         
-        # Allocate storage for extended trajectories
+        # Allocate storage for extended trajectories and weights
         curr_particles = np.empty((N, T+1, d), dtype=float)
+        curr_weights   = np.empty((N, T+1), dtype=float)
+        
+        # copy weights
+        curr_weights[:, :T]   = prev_weights.copy()
+        curr_weights[:, T]  = prev_weights[:, T-1].copy()   # carry-forward
         
         for i in range(N):
             traj_prev = prev_particles[i, :, :]             # (T, d)
@@ -118,7 +123,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
             curr_particles[i, :T, :] = np.copy(traj_prev)
             curr_particles[i, T, :] = x_new
         
-        return ParticleSet(particles=curr_particles, weights=prev_weights.copy())
+        return ParticleSet(particles=curr_particles, weights=curr_weights)
     
     
     
@@ -137,18 +142,17 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
             w_k ∝ w_{k-1} · p(y_k | x_k)
         """
 
-        particle_set.normalize()
-        
         curr_particles = particle_set.particles
         curr_weights   = particle_set.weights
         
         N, T, d = curr_particles.shape
-        
+        k = T -1
+                
         if T < 2:
-            raise ValueError("pf_update_step required T>=2")
+            raise ValueError("reweight_particles requires at least 2 time steps (T>=2)")
         
         # Work in log-space for numerical stability
-        log_w = np.log(curr_weights + 1e-300)
+        log_w = np.log(curr_weights[:, k-1] + 1e-300)
         
         for i in range(N):
             traj_curr = curr_particles[i]
@@ -168,7 +172,8 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         else:
             w_new = np.exp(log_w - a)
         
-        updated_particle_set = ParticleSet(particles=curr_particles, weights=w_new)
-        updated_particle_set.normalize()
+        curr_weights[:, k] = w_new.copy()
+        updated_particle_set = ParticleSet(particles=curr_particles, weights=curr_weights)
+        updated_particle_set.normalize(k)
         
         return updated_particle_set

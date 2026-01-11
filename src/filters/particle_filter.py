@@ -14,13 +14,11 @@ from filters.kalman_filter import *
 @dataclass
 class ParticleSet:
     """
-    Empirical approximation of a smoothing distribution.
+    Empirical approximation of filtering and smoothing distribution.
 
-    Stores a collection of weighted state trajectories:
-        { (X_{0:k}^{(i)}, w_k^{(i)}) }_{i=1}^N
-
-    This is the particle-based analogue of a Gaussian belief
-    used in Kalman filtering, but defined on trajectory space.
+    Stores:
+    particles[i, k] : state of particle i at time k
+    weights[i, k]   : importance weight of particle i at time k
     """
     
     particles   : np.ndarray
@@ -37,28 +35,29 @@ class ParticleSet:
     
     weights     : np.ndarray
     """
-    Shape: (N,)
+    Shape: (N, T)
 
     Importance weights associated with each particle(trajectory).
     Weights need only be proportional; normalization is handled internally.
     """
     
-    def normalize(self):
+    def normalize(self, time_index: int):
         """
-        Normalize weights in-place.
+        Normalize weights at a specific time index.
 
         If weights are invalid or numerically degenerate,
         reset to a uniform distribution.
         """
         
-        s = np.sum(self.weights)
+        w = self.weights[:, time_index]
+        s = np.sum(w)
         
         if (not np.isfinite(s)) or (s <= 0.0):
-            self.weights = np.full(self.weights.shape[0], 1.0/self.weights.shape[0])
+            self.weights[:, time_index] = 1.0 / w.shape[0]
         else:
-            self.weights = self.weights/s
+            self.weights[:, time_index] = w / s
     
-    def effective_sample_size(self) -> float:
+    def effective_sample_size(self, time_index: int) -> float:
         """
         Compute Effective Sample Size (ESS).
 
@@ -66,8 +65,9 @@ class ParticleSet:
         to the approximation. Used to detect weight degeneracy.
         """
         
-        self.normalize()
-        return 1.0/np.sum( self.weights**2)
+        self.normalize(time_index)
+        w = self.weights[:, time_index]
+        return 1.0 / np.sum(w**2)
 
 
 
@@ -135,20 +135,21 @@ class ParticleFilterModel(ABC):
 # ============================================================
 def pf_resample_step(
     particle_set    :   ParticleSet,
+    time_index      :   int,
     rng             :   np.random.Generator
 ) -> ParticleSet:
     """
     Perform systematic resampling on trajectory space.
 
     Entire trajectories are resampled according to their weights.
-    After resampling, all weights are reset to uniform.
+    After resampling, weights at time_index are reset to uniform..
     """
     
     # Ensure weights form a valid probability distribution
-    particle_set.normalize()
+    particle_set.normalize(time_index)
     
     X = particle_set.particles  # (N, T, d)
-    w = particle_set.weights    # (N,)
+    w = particle_set.weights[:, time_index]    # (N,)
     N = X.shape[0]
     
     # Systematic resampling grid
@@ -175,14 +176,15 @@ def pf_resample_step(
         else:
             j += 1
 
+    # Resample trajectories
+    particles_resampled = X[idx].copy()
+
+    # Copy full weight history, reset current column
+    weights_resampled = particle_set.weights[idx].copy()
+    weights_resampled[:, time_index] = 1.0 / N
+    
     # Return resampled particle set with uniform weights
-    return ParticleSet(
-        particles=X[idx].copy(),
-        weights=np.full(N, 1.0 / N)
-    )
-
-
-
+    return ParticleSet(particles_resampled, weights_resampled)
 
 
 
@@ -250,7 +252,7 @@ def run_particle_filter(
             obs_counter += 1
         
         # Resample if degeneracy is detected
-        if particle_set.effective_sample_size() < model.ess_threshold_ratio * num_particles:
-            particle_set = pf_resample_step(particle_set=particle_set, rng=rng) 
+        if particle_set.effective_sample_size(k) < model.ess_threshold_ratio * num_particles:
+            particle_set = pf_resample_step(particle_set=particle_set, time_index=k, rng=rng) 
     
     return particle_set

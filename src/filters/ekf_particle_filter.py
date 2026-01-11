@@ -1,33 +1,12 @@
 import numpy as np
-from filters.particle_filter import *
-
-from filters.kalman_filter import *
-from filters.extended_kalman_filter import *
-
 from dataclasses import dataclass
 from typing import Optional, Callable
 
 
-
-# ============================================================
-# Utility: Multivariate Gaussian log-pdf
-# ============================================================
-def mvn_logpdf(x: np.ndarray, mean: np.ndarray, cov: np.ndarray) -> float:
-    """
-    Log-density of a multivariate Gaussian N(mean, cov).
-
-    Implemented using Cholesky decomposition for numerical stability.
-    Used for evaluating p(y_n | x_{n-1}^{(i)}) in the EKF-based PF.
-    """
-    x = np.atleast_1d(x)
-    mean = np.atleast_1d(mean)
-
-    L = np.linalg.cholesky(cov)
-    z = np.linalg.solve(L, x - mean)
-    quad = float(z.T @ z)
-    logdet = 2.0 * float(np.sum(np.log(np.diag(L))))
-    d = x.shape[0]
-    return -0.5 * (d * np.log(2.0 * np.pi) + logdet + quad)
+from filters.particle_filter import *
+from filters.kalman_filter import *
+from filters.extended_kalman_filter import *
+from utils.gaussian_utils import *
 
 
 
@@ -132,7 +111,7 @@ class EKFParticleFilterModel(ParticleFilterModel):
         
         # Allocate storage for trajectories and weights
         particles = np.empty((num_particles, 1, d), dtype=float)
-        weights = np.full(num_particles, 1.0/num_particles)
+        weights   = np.full((num_particles, 1), 1.0 / num_particles)   # (N,1)
         
         # vectorize this loop later
         for i in range(num_particles):
@@ -172,8 +151,13 @@ class EKFParticleFilterModel(ParticleFilterModel):
         
         N, T, d = prev_particles.shape
         
-        # Allocate storage for extended trajectories
+        # Allocate storage for extended trajectories and weights
         curr_particles = np.empty((N, T+1, d), dtype=float)
+        curr_weights   = np.empty((N, T + 1), dtype=float)
+        
+        # copy full history and carry-forward last weights into new time column
+        curr_weights[:, :T] = prev_weights.copy()
+        curr_weights[:, T]  = prev_weights[:, T - 1].copy()
         
         for i in range(N):
             traj_prev   = prev_particles[i, :, :]       # (T, d)
@@ -202,7 +186,7 @@ class EKFParticleFilterModel(ParticleFilterModel):
             curr_particles[i, :T] = traj_prev.copy()
             curr_particles[i, T] = x_new
             
-        return ParticleSet(particles=curr_particles, weights=prev_weights.copy())
+        return ParticleSet(particles=curr_particles, weights=curr_weights)
 
 
 
@@ -225,19 +209,20 @@ class EKFParticleFilterModel(ParticleFilterModel):
         EKF-based Gaussian prediction.
         """
         
-        
-        particle_set.normalize()
-        
         curr_particles = particle_set.particles
         curr_weights   = particle_set.weights
         
         N, T, d = curr_particles.shape
+        k = T - 1
         
         if T < 2:
             raise ValueError("pf_update_step required T>=2")
         
+        # normalize previous column before log
+        particle_set.normalize(k-1)
+        
         # Work in log-space for numerical stability
-        log_w = np.log(curr_weights + 1e-300)
+        log_w = np.log(curr_weights[:, k-1] + 1e-300)
         
         for i in range(N):
             traj_curr = curr_particles[i]
@@ -268,7 +253,9 @@ class EKFParticleFilterModel(ParticleFilterModel):
         else:
             w_new = np.exp(log_w - a)
         
-        updated_particleSet = ParticleSet(particles=curr_particles, weights=w_new)
-        updated_particleSet.normalize()
+        curr_weights[:, k] = w_new.copy()
         
-        return updated_particleSet
+        updated_particle_set = ParticleSet(particles=curr_particles, weights=curr_weights)
+        updated_particle_set.normalize(k)
+        
+        return updated_particle_set
