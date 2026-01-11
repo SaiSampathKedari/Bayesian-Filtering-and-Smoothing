@@ -56,7 +56,7 @@ class EKFParticleFilterModel(ParticleFilterModel):
         
         return Gaussian(m_pred, C_pred)
     
-    def pf_initialize_step(
+    def initialize_particles(
         self,
         num_particles   :   int,
         rng             :   np.random.Generator
@@ -83,15 +83,15 @@ class EKFParticleFilterModel(ParticleFilterModel):
         
         return ParticleSet( particles=particles, weights=weights)
     
-    def pf_propagate_step(
+    def propagate_particles(
         self,
-        particle_set_prev   :   ParticleSet,
+        particle_set   :   ParticleSet,
         rng                 :   np.random.Generator,
-        y: Optional[np.ndarray] = None
+        y_observation: Optional[np.ndarray] = None
     ) -> ParticleSet:
         
-        particles_prev  =   particle_set_prev.particles
-        weights_prev    =   particle_set_prev.weights
+        particles_prev  =   particle_set.particles
+        weights_prev    =   particle_set.weights
         
         N, T, d = particles_prev.shape
         
@@ -115,7 +115,7 @@ class EKFParticleFilterModel(ParticleFilterModel):
             
             # x_n ~ p(x_n|x_{n-1}, y_n)
             else:
-                X_posterior = self.ekf_update_one_step(y_measurement=y,
+                X_posterior = self.ekf_update_one_step(y_measurement=y_observation,
                                               model=self.ekf_model,
                                               X_predicted=X_prior)
 
@@ -128,14 +128,14 @@ class EKFParticleFilterModel(ParticleFilterModel):
         return ParticleSet(particles=particles_curr, weights=weights_prev.copy())
 
 
-    def pf_reweight_step(
+    def reweight_particles(
         self,
         y_observation: np.ndarray,
-        particle_set_curr: ParticleSet
+        particle_set: ParticleSet
     ) -> ParticleSet:
         
-        particles_curr = particle_set_curr.particles
-        weights_curr   = particle_set_curr.weights
+        particles_curr = particle_set.particles
+        weights_curr   = particle_set.weights
         
         N, T, d = particles_curr.shape
         

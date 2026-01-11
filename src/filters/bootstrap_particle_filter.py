@@ -42,7 +42,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     # ------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------
-    def pf_initialize_step(
+    def initialize_particles(
         self,
         num_particles   :   int,
         rng             :   np.random.Generator
@@ -83,11 +83,11 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     # ------------------------------------------------------------
     # Propagate
     # ------------------------------------------------------------
-    def pf_propagate_step(
+    def propagate_particles(
         self,
-        particle_set_prev:   ParticleSet,
+        particle_set:   ParticleSet,
         rng             :   np.random.Generator,
-        y: Optional[np.ndarray] = None
+        y_observation: Optional[np.ndarray] = None
     ) -> ParticleSet:
         """
         Propagate particles forward using the transition model.
@@ -99,8 +99,8 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         Weights are propagated unchanged.
         """
         
-        particles_prev = particle_set_prev.particles
-        weights_prev   = particle_set_prev.weights
+        particles_prev = particle_set.particles
+        weights_prev   = particle_set.weights
         
         N, T, d = particles_prev.shape
         
@@ -125,10 +125,10 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     # ------------------------------------------------------------
     # Update
     # ------------------------------------------------------------
-    def pf_reweight_step(
+    def reweight_particles(
         self,
         y_observation   :   np.ndarray,
-        particle_set_curr:   ParticleSet
+        particle_set:   ParticleSet
     ) ->ParticleSet:
         """
         Update particle weights using the measurement likelihood.
@@ -137,10 +137,10 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
             w_k ∝ w_{k-1} · p(y_k | x_k)
         """
 
-        particle_set_curr.normalize()
+        particle_set.normalize()
         
-        particles_curr = particle_set_curr.particles
-        weights_curr   = particle_set_curr.weights
+        particles_curr = particle_set.particles
+        weights_curr   = particle_set.weights
         
         N, T, d = particles_curr.shape
         
@@ -168,7 +168,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         else:
             w_new = np.exp(log_w - a)
         
-        updated_particleSet = ParticleSet(particles=particles_curr, weights=w_new)
-        updated_particleSet.normalize()
+        updated_particle_set = ParticleSet(particles=particles_curr, weights=w_new)
+        updated_particle_set.normalize()
         
-        return updated_particleSet
+        return updated_particle_set

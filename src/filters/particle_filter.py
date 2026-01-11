@@ -6,51 +6,49 @@ from typing import Optional, Callable
 from filters.kalman_filter import *
 
 
+
+
+# ============================================================
+# Particle container
+# ============================================================
 @dataclass
 class ParticleSet:
     """
-    Container representing an empirical distribution over state trajectories.
+    Empirical approximation of a smoothing distribution.
 
-    Each particle corresponds to one complete state trajectory through time,
-    and each weight represents the importance of that trajectory given all
-    observations processed so far.
+    Stores a collection of weighted state trajectories:
+        { (X_{0:k}^{(i)}, w_k^{(i)}) }_{i=1}^N
 
-    This object stores the full particle approximation of the smoothing
-    distribution and is the particle-based analogue of the Gaussian belief
-    used in Kalman filtering.
+    This is the particle-based analogue of a Gaussian belief
+    used in Kalman filtering, but defined on trajectory space.
     """
     
     particles   : np.ndarray
     """
-    Array of shape (N, T, d).
+    Shape: (N, T, d)
 
-    particles[i] contains the full trajectory of the i-th particle.
-    particles[i, k] is the state at time index k for that trajectory.
+    particles[i]      = full trajectory of particle i
+    particles[i, k]   = state at time k for particle i
 
-    N is the number of particles.
-    T is the number of time steps currently stored.
-    d is the dimension of the state space.
+    N = number of particles
+    T = trajectory length (time steps stored)
+    d = state dimension
     """
     
     weights     : np.ndarray
     """
-    Array of shape (N,).
+    Shape: (N,)
 
-    Importance weights associated with each particle trajectory.
-    Each weight reflects how well that trajectory explains the observed data.
-
-    The weights are assumed to be non-negative and are normalized when needed.
+    Importance weights associated with each particle(trajectory).
+    Weights need only be proportional; normalization is handled internally.
     """
     
     def normalize(self):
         """
-        Normalize the particle weights in place.
+        Normalize weights in-place.
 
-        If the total weight is invalid or numerically degenerate,
-        the weights are reset to a uniform distribution.
-
-        This method is called automatically by functions that rely
-        on properly normalized weights.
+        If weights are invalid or numerically degenerate,
+        reset to a uniform distribution.
         """
         
         s = np.sum(self.weights)
@@ -62,73 +60,88 @@ class ParticleSet:
     
     def ess(self) -> float:
         """
-        Compute the effective sample size of the particle set.
+        Compute Effective Sample Size (ESS).
 
-        The effective sample size measures how many particles are
-        meaningfully contributing to the approximation.
-
-        A small value indicates severe weight degeneracy and is
-        typically used as a trigger for resampling.
+        ESS ≈ number of particles meaningfully contributing
+        to the approximation. Used to detect weight degeneracy.
         """
+        
         self.normalize()
         return 1.0/np.sum( self.weights**2)
 
 
+
+
+
+# ============================================================
+# Abstract particle filter model interface
+# ============================================================
 class ParticleFilterModel(ABC):
     """
     Abstract interface for a particle filter variant.
 
-    Any PF variant must define how to:
-      - initialize particles
-      - propagate (predict)
-      - incorporate a measurement (update)
+    A concrete PF implementation must define:
+      - how particles are initialized
+      - how trajectories are propagated (proposal)
+      - how importance weights are updated
 
-    Resampling is kept outside to stay identical across variants.
+    Resampling logic is intentionally kept external and shared.
     """
     
+    # Resampling is triggered when ESS < ratio * N
     ess_threshold_ratio: float = 0.5
     
     @abstractmethod
-    def pf_initialize_step(
+    def initialize_particles(
         self,
         num_particles: int,
         rng: np.random.Generator
     ) -> ParticleSet:
+        """Sample initial particle trajectories."""
         raise NotImplementedError
     
     @abstractmethod
-    def pf_propagate_step(
+    def propagate_particles(
         self,
-        particle_set_prev: ParticleSet,
+        particle_set: ParticleSet,
         rng: np.random.Generator,
-        y: Optional[np.ndarray] = None
+        y_observation: Optional[np.ndarray] = None
     ) -> ParticleSet:
+        """
+        Extend each trajectory by one time step.
+
+        The proposal distribution may optionally depend on
+        the current measurement (optimal proposals).
+        """
         raise NotImplementedError
     
     @abstractmethod
-    def pf_reweight_step(
+    def reweight_particles(
         self,
         y_observation: np.ndarray,
-        particle_set_curr: ParticleSet
+        particle_set: ParticleSet
     ) -> ParticleSet:
+        """
+        Update importance weights using the measurement likelihood
+        or its approximation.
+        """
         raise NotImplementedError
     
 
+
+
+# ============================================================
+# Resampling (shared across all PF variants)
+# ============================================================
 def pf_resample_step(
     particle_set_prev   :   ParticleSet,
     rng         :   np.random.Generator
 ) -> ParticleSet:
     """
-    Resampling step of the particle filter.
+    Perform systematic resampling on trajectory space.
 
-    Performs systematic resampling on trajectory space to combat
-    weight degeneracy. Entire trajectories are resampled according
-    to their importance weights.
-
-    After resampling:
-      - The number of particles remains unchanged.
-      - All resampled trajectories are assigned uniform weights.
-      - The empirical distribution is preserved in expectation.
+    Entire trajectories are resampled according to their weights.
+    After resampling, all weights are reset to uniform.
     """
     
     # Ensure weights form a valid probability distribution
