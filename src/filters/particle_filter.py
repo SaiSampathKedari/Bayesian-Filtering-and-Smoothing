@@ -89,7 +89,7 @@ class ParticleFilterModel(ABC):
     ess_threshold_ratio: float = 0.5
     
     @abstractmethod
-    def pf_initialization_step(
+    def pf_initialize_step(
         self,
         num_particles: int,
         rng: np.random.Generator
@@ -97,15 +97,16 @@ class ParticleFilterModel(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def pf_prediction_step(
+    def pf_propagate_step(
         self,
         particle_set_prev: ParticleSet,
-        rng: np.random.Generator
+        rng: np.random.Generator,
+        y: Optional[np.ndarray] = None
     ) -> ParticleSet:
         raise NotImplementedError
     
     @abstractmethod
-    def pf_update_step(
+    def pf_reweight_step(
         self,
         y_observation: np.ndarray,
         particle_set_curr: ParticleSet
@@ -195,8 +196,7 @@ def run_particle_filter(
     # --------------------------------------------------
     # 1) Initialization
     # --------------------------------------------------
-    particle_set = model.pf_initialization_step(
-                                             num_particles=num_particles,
+    particle_set = model.pf_initialize_step(num_particles=num_particles,
                                              rng=rng)
     
     obs_counter = 0     # index over available measurements
@@ -206,17 +206,21 @@ def run_particle_filter(
     # 2) Main filtering loop
     # --------------------------------------------------
     for k in range(1, T_total):
+        y_k = None
+        have_measurement = (obs_counter < len(y_observations.obs_ind)) and (k == y_observations.obs_ind[obs_counter])
+        if have_measurement:
+            y_k = y_observations.obs[obs_counter]
         
-        # 2) Prediction: extend each trajectory by one state
-        particle_set = model.pf_prediction_step(
+        # 3) propagate: extend each trajectory by one state (proposal may use y_k)
+        particle_set = model.pf_propagate_step(
                             particle_set_prev=particle_set,
-                            rng=rng)
+                            rng=rng,
+                            y=y_k
+                            )
         
         # 3) Update weights if a measurement is available at this time
-        if obs_counter < len(y_observations.obs_ind) and k == y_observations.obs_ind[obs_counter]:
-            y_k = y_observations.obs[obs_counter]
-            
-            particle_set = model.pf_update_step(y_observation=y_k,
+        if have_measurement:
+            particle_set = model.pf_reweight_step(y_observation=y_k,
                                               particle_set_curr=particle_set)
             obs_counter += 1
         
@@ -225,236 +229,3 @@ def run_particle_filter(
             particle_set = pf_resample_step(particle_set_prev=particle_set, rng=rng) 
     
     return particle_set
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-@dataclass
-class ParticleFilterModel:
-    """
-    Model container defining the assumptions of a particle filter.
-
-    This object specifies the state-space model and all probability
-    components required to perform Sequential Importance Sampling
-    with resampling on trajectory space.
-
-    It plays the same structural role as KalmanFilterModel,
-    ExtendedKalmanFilterModel, and UnscentedKalmanFilterModel,
-    but without any Gaussian assumptions.
-    """
-    
-    Phi: Callable[[np.ndarray], np.ndarray]
-    """State trasition function " X_{k+1} = Phi(X_k) (no noise injected here)."""
-    
-    h:  Callable[[np.ndarray], np.ndarray]
-    """Measurement function h(x_k) (no noise injected here)."""
-    
-    proposal_sampler: Callable[[Optional[np.ndarray], np.random.Generator], np.ndarray]
-    """
-    Proposal distribution sampler.
-
-    Samples the next state given a particle's past trajectory.
-
-    For initialization, the input trajectory is None and the sampler
-    must generate an initial state.
-
-    For prediction, the input is the full previous trajectory and the
-    sampler generates the next state conditioned on it.
-    """
-    
-    proposal_logpdf: Callable[[np.ndarray, Optional[np.ndarray]], float]
-    """
-    Log-density of the proposal distribution.
-
-    Evaluates the log probability of a sampled state under the proposal.
-
-    For initialization, the trajectory argument is None.
-    For prediction, the trajectory contains all past states.
-    """
-    
-    transition_logpdf: Callable[[np.ndarray, np.ndarray], float]
-    """
-    Log-density of the state transition model.
-
-    Evaluates the log probability of transitioning from the previous
-    state to the current state under the assumed system dynamics.
-
-    This term corrects the proposal distribution during importance
-    weight updates.
-    """
-    
-    measurement_logpdf: Callable[[np.ndarray, np.ndarray], float]
-    """
-    Log-likelihood of a measurement given the current state.
-
-    Evaluates how well a particle's current state explains an observed
-    measurement.
-
-    This term is responsible for incorporating sensor information into
-    the particle weights.
-    """
-    
-    ess_threshold_ratio: float = 0.5
-    """
-    Threshold for resampling based on effective sample size.
-
-    Resampling is triggered when the effective sample size falls below
-    ess_threshold_ratio times the number of particles.
-    """
-
-
-def pf_initialization_step(
-    model           :   ParticleFilterModel,
-    num_particles   :   int, 
-    rng             :   np.random.Generator   
-) -> ParticleSet:
-    """
-    Initialize the particle system at time k = 0.
-
-    Draws independent samples from the proposal distribution to form
-    the initial set of particle trajectories.
-
-    Each particle represents a trajectory of length one:
-        X_0^{(i)} = (x_0^{(i)})
-
-    All particles are assigned uniform importance weights.
-    """
-    
-    if num_particles <= 0:
-        raise ValueError("num_particles must be positive")
-    
-    # Sample once to infer state dimension and validate sampler output
-    x0_0 = model.proposal_sampler(None, rng)
-    if x0_0.ndim != 1:
-        raise ValueError(f"proposal_sampler(None, rng) must return (d,), got shape {x0_0.shape}")
-    
-    d = x0_0.shape[0] # dimension of the state
-    
-    # Allocate storage for trajectories and weights
-    particles = np.empty((num_particles, 1, d), dtype=float)
-    weights = np.full(num_particles, 1.0/num_particles)
-    
-    # Store first sampled particle
-    particles[0, 0, :] = x0_0
-    
-    # Sample remaining initial particles
-    for i in range(1, num_particles):
-        x0 = model.proposal_sampler(None, rng)
-        particles[i, 0, :] = x0
-    
-    return ParticleSet(particles=particles, weights=weights)
-
-def pf_prediction_step(
-    model           :   ParticleFilterModel,
-    particleset_prev:   ParticleSet,
-    rng             :   np.random.Generator
-) -> ParticleSet:
-    """
-    Particle filter prediction step.
-
-    Extends each particle trajectory by one time step by sampling
-    from the proposal distribution:
-        x_k^{(i)} ~ pi(x_k | X_{k-1}^{(i)})
-
-    The resulting particle set represents trajectories:
-        X_k^{(i)} = (X_{k-1}^{(i)}, x_k^{(i)})
-
-    Importance weights are propagated unchanged.
-    """
-    
-    particles_prev = particleset_prev.particles
-    weights_prev   = particleset_prev.weights
-    
-    N, T, d = particles_prev.shape
-    
-    # Allocate storage for extended trajectories
-    particles_curr = np.empty((N, T+1, d), dtype=float)
-    
-    for i in range(N):
-        traj_prev = particles_prev[i, :, :]     # (T, d)
-        x_new = model.proposal_sampler(traj_prev, rng)
-        
-        # Copy past trajectory and append new state
-        particles_curr[i, :T, :] = np.copy(traj_prev)
-        particles_curr[i, T, :] = x_new
-    
-    return ParticleSet(particles=particles_curr, weights=weights_prev.copy())
-
-def pf_update_step(
-    y_observation   :   np.ndarray,
-    model           :   ParticleFilterModel,
-    particleSet_curr:   ParticleSet
-) ->ParticleSet:
-    """
-    Particle filter update step (Sequential Importance Sampling).
-    Updates particle importance weights 
-    Particle trajectories are not modified.
-    """
-     
-    particleSet_curr.normalize()
-    
-    particles_curr = particleSet_curr.particles
-    weights_curr   = particleSet_curr.weights
-    
-    N, T, d = particles_curr.shape
-    
-    if T < 2:
-        raise ValueError("pf_update_step required T>=2")
-    
-    # Work in log-space for numerical stability
-    log_w = np.log(weights_curr + 1e-300)
-    
-    for i in range(N):
-        traj_curr = particles_curr[i]
-        
-        x_prev = traj_curr[-2] # x_{n-1}
-        x_curr = traj_curr[-1] # x_n
-        
-        # Log likelihood term 
-        measurement_log_likelihood  = model.measurement_logpdf(y_observation, x_curr)
-        
-        # Log transition term
-        transition_log_likelihood   = model.transition_logpdf(x_curr, x_prev)
-        
-        # Log Proposal term
-        log_prop = model.proposal_logpdf(x_curr, traj_curr[:-1])
-        
-        #Incremental log-weight
-        log_w[i] += (measurement_log_likelihood + transition_log_likelihood - log_prop)
-        
-    # Stable normalization . Handle degenerace ( all -inf) safely
-    a = np.max(log_w)
-    if not np.isfinite(a):
-        w_new = np.full(N, 1.0/N)
-    else:
-        w_new = np.exp(log_w - a)
-    
-    updated_particleSet = ParticleSet(particles=particles_curr, weights=w_new)
-    updated_particleSet.normalize()
-    
-    return updated_particleSet
