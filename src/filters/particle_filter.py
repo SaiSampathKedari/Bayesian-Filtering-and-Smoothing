@@ -58,7 +58,7 @@ class ParticleSet:
         else:
             self.weights = self.weights/s
     
-    def ess(self) -> float:
+    def effective_sample_size(self) -> float:
         """
         Compute Effective Sample Size (ESS).
 
@@ -134,8 +134,8 @@ class ParticleFilterModel(ABC):
 # Resampling (shared across all PF variants)
 # ============================================================
 def pf_resample_step(
-    particle_set_prev   :   ParticleSet,
-    rng         :   np.random.Generator
+    particle_set    :   ParticleSet,
+    rng             :   np.random.Generator
 ) -> ParticleSet:
     """
     Perform systematic resampling on trajectory space.
@@ -145,10 +145,10 @@ def pf_resample_step(
     """
     
     # Ensure weights form a valid probability distribution
-    particle_set_prev.normalize()
+    particle_set.normalize()
     
-    X = particle_set_prev.particles  # (N, T, d)
-    w = particle_set_prev.weights    # (N,)
+    X = particle_set.particles  # (N, T, d)
+    w = particle_set.weights    # (N,)
     N = X.shape[0]
     
     # Systematic resampling grid
@@ -182,6 +182,13 @@ def pf_resample_step(
     )
 
 
+
+
+
+
+# ============================================================
+# Generic particle filter runner
+# ============================================================
 def run_particle_filter(
     y_observations  :   Observations,
     model           :   ParticleFilterModel,
@@ -189,56 +196,61 @@ def run_particle_filter(
     rng             :   np.random.Generator
 )->ParticleSet:
     """
-    Run a particle filter over a full time horizon.
+    Generic particle filter driver.
 
-    The algorithm operates on trajectory space and consists of:
-      - initialization
-      - repeated prediction (proposal sampling)
-      - optional weight updates when measurements are available
-      - adaptive resampling based on effective sample size
+    Executes Sequential Importance Sampling with Resampling (SISR)
+    on trajectory space:
 
-    The returned ParticleSet represents an empirical approximation
-    of the smoothing distribution at the final time step.
-    
-    Generic PF runner. Works for any model implementing ParticleFilterModel.
+        1) Initialize particles
+        2) For each time step:
+            - propagate trajectories
+            - reweight if a measurement is available
+            - resample if ESS drops below threshold
+
+    Returns
+    -------
+    ParticleSet
+        Empirical approximation of the smoothing distribution
+        at the final time step.
     """
+
     
     # Total number of discrete time steps
-    T_total = y_observations.times.shape[0]
+    num_steps = y_observations.times.shape[0]
     
     # --------------------------------------------------
-    # 1) Initialization
+    # Initialization
     # --------------------------------------------------
-    particle_set = model.pf_initialize_step(num_particles=num_particles,
+    particle_set = model.initialize_particles(num_particles=num_particles,
                                              rng=rng)
     
-    obs_counter = 0     # index over available measurements
+    obs_counter = 0     # index into observation list
     
     
     # --------------------------------------------------
-    # 2) Main filtering loop
+    # Main filtering loop
     # --------------------------------------------------
-    for k in range(1, T_total):
+    for k in range(1, num_steps):
         y_k = None
         have_measurement = (obs_counter < len(y_observations.obs_ind)) and (k == y_observations.obs_ind[obs_counter])
         if have_measurement:
             y_k = y_observations.obs[obs_counter]
         
-        # 3) propagate: extend each trajectory by one state (proposal may use y_k)
-        particle_set = model.pf_propagate_step(
-                            particle_set_prev=particle_set,
+        # Propagation (proposal sampling)
+        particle_set = model.propagate_particles(
+                            particle_set=particle_set,
                             rng=rng,
-                            y=y_k
+                            y_observation=y_k
                             )
         
-        # 3) Update weights if a measurement is available at this time
+        # Weight update
         if have_measurement:
-            particle_set = model.pf_reweight_step(y_observation=y_k,
-                                              particle_set_curr=particle_set)
+            particle_set = model.reweight_particles(y_observation=y_k,
+                                              particle_set=particle_set)
             obs_counter += 1
         
-        # 4) Resample if particle degeneracy is detected
-        if particle_set.ess() < model.ess_threshold_ratio * num_particles:
-            particle_set = pf_resample_step(particle_set_prev=particle_set, rng=rng) 
+        # Resample if degeneracy is detected
+        if particle_set.effective_sample_size() < model.ess_threshold_ratio * num_particles:
+            particle_set = pf_resample_step(particle_set=particle_set, rng=rng) 
     
     return particle_set

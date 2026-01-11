@@ -11,7 +11,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     Bootstrap Particle Filter model.
 
     This model implements Sequential Importance Sampling with resampling
-    using the transition density as the proposal distribution.
+    using the state transition density as the proposal distribution.
 
     Proposal:
         x_k ~ p(x_k | x_{k-1})
@@ -27,7 +27,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     State transition sampler.
 
     - If input state is None, samples from the initial prior p(x_0).
-    - Otherwise, samples x_k ~ p(x_k | x_{k-1}).
+    - Otherwise, samples x_k ~ p(x_k | x_{k-1}) according to the system dynamics.
     """
     
     measurement_logpdf: Callable[[np.ndarray, np.ndarray], float]
@@ -99,26 +99,26 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         Weights are propagated unchanged.
         """
         
-        particles_prev = particle_set.particles
-        weights_prev   = particle_set.weights
+        prev_particles = particle_set.particles
+        prev_weights   = particle_set.weights
         
-        N, T, d = particles_prev.shape
+        N, T, d = prev_particles.shape
         
         # Allocate storage for extended trajectories
-        particles_curr = np.empty((N, T+1, d), dtype=float)
+        curr_particles = np.empty((N, T+1, d), dtype=float)
         
         for i in range(N):
-            traj_prev = particles_prev[i, :, :]             # (T, d)
+            traj_prev = prev_particles[i, :, :]             # (T, d)
             x_prev = traj_prev[-1]                          # x_{n-1}
             x_new = self.transition_sampler(x_prev, rng)    # x_n
             if x_new.ndim != 1:
                 raise ValueError("transition_sampler must return a 1D state vector")
 
             # Copy past trajectory and append new state
-            particles_curr[i, :T, :] = np.copy(traj_prev)
-            particles_curr[i, T, :] = x_new
+            curr_particles[i, :T, :] = np.copy(traj_prev)
+            curr_particles[i, T, :] = x_new
         
-        return ParticleSet(particles=particles_curr, weights=weights_prev.copy())
+        return ParticleSet(particles=curr_particles, weights=prev_weights.copy())
     
     
     
@@ -131,7 +131,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         particle_set:   ParticleSet
     ) ->ParticleSet:
         """
-        Update particle weights using the measurement likelihood.
+        Update particle weights using the measurement likelihood p(y_k | x_k).
 
         Weight update:
             w_k ∝ w_{k-1} · p(y_k | x_k)
@@ -139,19 +139,19 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
 
         particle_set.normalize()
         
-        particles_curr = particle_set.particles
-        weights_curr   = particle_set.weights
+        curr_particles = particle_set.particles
+        curr_weights   = particle_set.weights
         
-        N, T, d = particles_curr.shape
+        N, T, d = curr_particles.shape
         
         if T < 2:
             raise ValueError("pf_update_step required T>=2")
         
         # Work in log-space for numerical stability
-        log_w = np.log(weights_curr + 1e-300)
+        log_w = np.log(curr_weights + 1e-300)
         
         for i in range(N):
-            traj_curr = particles_curr[i]
+            traj_curr = curr_particles[i]
             
             x_curr = traj_curr[-1] # x_n
             
@@ -168,7 +168,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
         else:
             w_new = np.exp(log_w - a)
         
-        updated_particle_set = ParticleSet(particles=particles_curr, weights=w_new)
+        updated_particle_set = ParticleSet(particles=curr_particles, weights=w_new)
         updated_particle_set.normalize()
         
         return updated_particle_set
