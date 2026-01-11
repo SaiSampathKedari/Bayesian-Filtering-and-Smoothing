@@ -70,6 +70,65 @@ class ParticleSet:
         return 1.0 / np.sum(w**2)
 
 
+    # --------------------------------------------------
+    # Filtering distribution
+    # --------------------------------------------------
+    def filtering_distribution(self, time_index: int):
+        """
+        Empirical filtering distribution at time_index.
+
+        Returns:
+            X_k : (N, d) particle states
+            w_k : (N,) normalized weights
+        """
+        if time_index < 0 or time_index >= self.weights.shape[1]:
+            raise IndexError("time_index out of bounds")
+
+        self.normalize(time_index)
+
+        X_k = self.particles[:, time_index, :]
+        w_k = self.weights[:, time_index]
+
+        return X_k, w_k
+    
+    
+    
+    # --------------------------------------------------
+    # Point estimates
+    # --------------------------------------------------
+    def mean(self, time_index: int) -> np.ndarray:
+        """
+        Weighted mean of filtering distribution at time_index.
+        """
+        X_k, w_k = self.filtering_distribution(time_index)
+        return np.sum(w_k[:, None] * X_k, axis=0)
+
+
+    def covariance(self, time_index: int) -> np.ndarray:
+        """
+        Weighted covariance of filtering distribution at time_index.
+        """
+        X_k, w_k = self.filtering_distribution(time_index)
+        mean = np.sum(w_k[:, None] * X_k, axis=0)
+
+        diff = X_k - mean
+        C = np.zeros((diff.shape[1], diff.shape[1]))
+        for i in range(diff.shape[0]):
+            C += w_k[i] * np.outer(diff[i], diff[i])
+
+        return C
+    
+    def map_particle(self, time_index: int):
+        """
+        Return state of the maximum-weight particle at time_index.
+        """
+        if time_index < 0 or time_index >= self.weights.shape[1]:
+            raise IndexError("time_index out of bounds")
+
+        self.normalize(time_index)
+        i = np.argmax(self.weights[:, time_index])
+        return self.particles[i, time_index]
+
 
 
 
