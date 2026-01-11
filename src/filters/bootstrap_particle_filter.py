@@ -1,6 +1,9 @@
 import numpy as np
 from filters.particle_filter import *
 
+from dataclasses import dataclass
+from typing import Optional, Callable
+
 
 @dataclass
 class BootStrapParticleFilterModel(ParticleFilterModel):
@@ -39,7 +42,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     # ------------------------------------------------------------
     # Initialization
     # ------------------------------------------------------------
-    def pf_initialization_step(
+    def pf_initialize_step(
         self,
         num_particles   :   int,
         rng             :   np.random.Generator
@@ -78,12 +81,13 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     
     
     # ------------------------------------------------------------
-    # Prediction
+    # Propagate
     # ------------------------------------------------------------
-    def pf_prediction_step(
+    def pf_propagate_step(
         self,
         particle_set_prev:   ParticleSet,
-        rng             :   np.random.Generator
+        rng             :   np.random.Generator,
+        y: Optional[np.ndarray] = None
     ) -> ParticleSet:
         """
         Propagate particles forward using the transition model.
@@ -121,7 +125,7 @@ class BootStrapParticleFilterModel(ParticleFilterModel):
     # ------------------------------------------------------------
     # Update
     # ------------------------------------------------------------
-    def pf_update_step(
+    def pf_reweight_step(
         self,
         y_observation   :   np.ndarray,
         particle_set_curr:   ParticleSet
