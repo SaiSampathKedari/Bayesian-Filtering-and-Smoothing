@@ -47,7 +47,7 @@ Each animation overlays the true system trajectory, noisy measurements, and the 
 ### Extended Kalman Filter (EKF)
 
 <p align="center">
-  <img src="images/bayesian_filtering/pendulum_true_vs_ekf.gif" height="320">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ekf.gif" width="100%">
 </p>
 
 <p align="center">
@@ -59,9 +59,9 @@ Each animation overlays the true system trajectory, noisy measurements, and the 
 ### Gauss–Hermite Kalman Filter (GHKF)
 
 <p align="center">
-  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf3.gif" height="300">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf3.gif" width="100%">
   &nbsp;&nbsp;&nbsp;
-  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf5.gif" height="300">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf5.gif" width="100%">
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@ Each animation overlays the true system trajectory, noisy measurements, and the 
 ### Unscented Kalman Filter (UKF)
 
 <p align="center">
-  <img src="images/bayesian_filtering/pendulum_true_vs_ukf.gif" height="320">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ukf.gif" width="100%">
 </p>
 
 <p align="center">
