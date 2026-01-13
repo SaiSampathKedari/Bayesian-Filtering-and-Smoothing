@@ -260,7 +260,7 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 from matplotlib.collections import LineCollection
 from matplotlib.patches import Ellipse
-
+import os
 
 def animate_truth_vs_filter(
     truth,
@@ -271,12 +271,14 @@ def animate_truth_vs_filter(
     filter_name: str = "EKF",
     title: str = "True vs Filter",
     slow_factor: float = 4.0,
+    output_format: str = "gif",   # "gif" or "mp4"
 ):
     import numpy as np
     import matplotlib.pyplot as plt
-    from matplotlib.animation import FuncAnimation, PillowWriter
+    from matplotlib.animation import FuncAnimation, PillowWriter, FFMpegWriter
     from matplotlib.collections import LineCollection
     from matplotlib.patches import Ellipse
+    import os
 
     # =================================================
     # Extract data
@@ -436,15 +438,19 @@ def animate_truth_vs_filter(
     # =================================================
     l_draw = 3.0
     span = 1.3 * l_draw
+    x_pivot = 0.0
+    y_pivot = 0.25 * span   # ← OPTIONAL upward shift (see below)
 
     ax_pend.set_xlim(-span, span)
     ax_pend.set_ylim(-span, 0.35 * span)
     ax_pend.set_box_aspect(1.0)
+    ax_pend.set_autoscale_on(False)
     ax_pend.axis("off")
 
-    ax_pend.plot(0, 0, "wo", ms=5)
+    ax_pend.plot(x_pivot, y_pivot, "wo", ms=5)
     pend_line, = ax_pend.plot([], [], lw=4.2, color="white")
     pend_mass, = ax_pend.plot([], [], "o", ms=12, color="#FF3B3B")
+
 
     # =================================================
     # Helpers
@@ -488,9 +494,10 @@ def animate_truth_vs_filter(
             alpha=0.65
         )
 
-        x = l_draw * np.sin(θ_true[k])
-        y = -l_draw * np.cos(θ_true[k])
-        pend_line.set_data([0, x], [0, y])
+        x = x_pivot + l_draw * np.sin(θ_true[k])
+        y = y_pivot - l_draw * np.cos(θ_true[k])
+
+        pend_line.set_data([x_pivot, x], [y_pivot, y])
         pend_mass.set_data([x], [y])
 
         θ_true_line.set_data(t[:k+1], θ_true[:k+1])
@@ -530,7 +537,17 @@ def animate_truth_vs_filter(
     )
 
     fps = int(1.0 / (slow_factor * dt))
-    ani.save(save_path, writer=PillowWriter(fps=fps))
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    if output_format.lower() == "gif":
+        writer = PillowWriter(fps=fps)
+    elif output_format.lower() == "mp4":
+        writer = FFMpegWriter(fps=fps, codec="libx264", bitrate=1800)
+    else:
+        raise ValueError("output_format must be 'gif' or 'mp4'")
+
+    ani.save(save_path, writer=writer)
 
     update(N - 1)
     plt.show()
