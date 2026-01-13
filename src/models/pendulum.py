@@ -2,6 +2,10 @@ import numpy as np
 from typing import Tuple, Callable
 from filters.kalman_filter import *
 
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import LineCollection
+
 def pendulum_dynamics(
     x   :   np.ndarray,
     dt  :   float,
@@ -202,3 +206,331 @@ def generate_nonlinear_data(
     )
 
     return truth_states, measurements
+
+
+def pendulum_continuous_dynamics(t, x, g=9.81, l=1.0):
+    """
+    Continuous-time nonlinear pendulum dynamics.
+
+    State:
+        x = [theta, theta_dot]
+
+    Equations:
+        dtheta/dt     = theta_dot
+        dtheta_dot/dt = -(g/l) * sin(theta)
+    """
+    theta, theta_dot = x
+    return np.array([
+        theta_dot,
+        -(g / l) * np.sin(theta)
+    ])
+
+def make_pendulum_phase_portrait(
+    theta_min=-1.2*np.pi,
+    theta_max= 1.2*np.pi,
+    omega_min=-6.0,
+    omega_max= 6.0,
+    g=9.81,
+    l=1.0,
+    grid_size=220
+):
+    """
+    Continuous-time pendulum phase portrait.
+    PURELY for visualization.
+    """
+
+    theta = np.linspace(theta_min, theta_max, grid_size)
+    omega = np.linspace(omega_min, omega_max, grid_size)
+
+    Theta, Omega = np.meshgrid(theta, omega)
+
+    U = Omega
+    V = -(g / l) * np.sin(Theta)
+
+    speed = np.sqrt(U**2 + V**2)
+    U /= (speed + 1e-8)
+    V /= (speed + 1e-8)
+
+    return theta, omega, U, V
+
+  
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation, PillowWriter
+from matplotlib.collections import LineCollection
+from matplotlib.patches import Ellipse
+
+
+def animate_truth_vs_filter(
+    truth,
+    measurements,
+    kf_history,
+    make_phase_portrait_fn,
+    save_path: str,
+    filter_name: str = "EKF",
+    title: str = "True vs Filter",
+    slow_factor: float = 4.0,
+):
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation, PillowWriter
+    from matplotlib.collections import LineCollection
+    from matplotlib.patches import Ellipse
+
+    # =================================================
+    # Extract data
+    # =================================================
+    t = truth.times
+    dt = t[1] - t[0]
+    T = t[-1]
+    N = len(t)
+
+    θ_true = truth.obs[:, 0]
+    ω_true = truth.obs[:, 1]
+
+    θ_est = kf_history.means[:, 0]
+    ω_est = kf_history.means[:, 1]
+
+    θ_std = kf_history.stds[:, 0]
+    ω_std = kf_history.stds[:, 1]
+
+    obs_idx = measurements.obs_ind
+    y_meas = measurements.obs.squeeze()
+
+    # =================================================
+    # Phase portrait (continuous, visual only)
+    # =================================================
+    θ_grid, ω_grid, U, V = make_phase_portrait_fn()
+
+    # =================================================
+    # Figure & layout
+    # =================================================
+    fig = plt.figure(
+        figsize=(16, 9),
+        facecolor="black",
+        constrained_layout=True
+    )
+    fig.suptitle(f"{title} ({filter_name})", color="white", fontsize=16)
+
+    gs = fig.add_gridspec(
+        3, 2,
+        width_ratios=[1.15, 1.0],
+        height_ratios=[2.2, 2.2, 1.6]
+    )
+
+    ax_phase = fig.add_subplot(gs[:, 0])
+    ax_θ     = fig.add_subplot(gs[0, 1])
+    ax_ω     = fig.add_subplot(gs[1, 1])
+    ax_pend  = fig.add_subplot(gs[2, 1])
+
+    for ax in (ax_phase, ax_θ, ax_ω, ax_pend):
+        ax.set_facecolor("black")
+        ax.tick_params(colors="white")
+        for s in ax.spines.values():
+            s.set_color("white")
+
+    # =================================================
+    # Phase portrait background
+    # =================================================
+    ax_phase.streamplot(
+        θ_grid, ω_grid, U, V,
+        color="#777777",
+        density=2.0,
+        linewidth=0.6,
+        arrowsize=0.8
+    )
+
+    ax_phase.set_xlim(θ_grid[0], θ_grid[-1])
+    ax_phase.set_ylim(ω_grid[0], ω_grid[-1])
+    ax_phase.set_box_aspect(1.0)
+    ax_phase.set_xlabel(r"$\theta$", color="white")
+    ax_phase.set_ylabel(r"$\dot{\theta}$", color="white")
+
+    true_lc = LineCollection([], linewidths=2.6)
+    est_lc  = LineCollection([], linewidths=2.2)
+    ax_phase.add_collection(true_lc)
+    ax_phase.add_collection(est_lc)
+
+    pt_true, = ax_phase.plot([], [], "o", color="#00E5FF", ms=6, label="True")
+    pt_est,  = ax_phase.plot([], [], "o", color="white", ms=5,
+                             label=f"{filter_name} mean")
+
+    # =================================================
+    # Covariance ellipse helper
+    # =================================================
+    def covariance_ellipse(mean, cov, ax, n_std=2.45, **kwargs):
+        eigvals, eigvecs = np.linalg.eigh(cov)
+        order = eigvals.argsort()[::-1]
+        eigvals, eigvecs = eigvals[order], eigvecs[:, order]
+
+        angle = np.degrees(np.arctan2(eigvecs[1, 0], eigvecs[0, 0]))
+        width, height = 2 * n_std * np.sqrt(eigvals)
+
+        ellipse = Ellipse(
+            xy=mean,
+            width=width,
+            height=height,
+            angle=angle,
+            **kwargs
+        )
+        ax.add_patch(ellipse)
+        return ellipse
+
+    cov_ellipse = covariance_ellipse(
+        mean=[θ_est[0], ω_est[0]],
+        cov=kf_history.covs[0],
+        ax=ax_phase,
+        edgecolor="white",
+        facecolor="none",
+        linewidth=2.4,
+        alpha=0.65,
+        label=r"95% covariance"
+    )
+
+    ax_phase.legend(
+        facecolor="black",
+        edgecolor="white",
+        labelcolor="white",
+        loc="upper right"
+    )
+
+    # =================================================
+    # θ(t)
+    # =================================================
+    ax_θ.set_xlim(0, T)
+    ax_θ.set_ylim(-2.2, 2.2)
+    ax_θ.set_ylabel(r"$\theta$", color="white")
+
+    θ_true_line, = ax_θ.plot([], [], "--", lw=2.6, color="#00E5FF", label="True θ")
+    θ_est_line,  = ax_θ.plot([], [], "-", lw=2.2, color="white",
+                             label=f"{filter_name} mean θ")
+
+    θ_ci = ax_θ.fill_between([], [], [], color="white", alpha=0.25,
+                             label=r"$\pm 2\sigma_\theta$")
+
+    meas_scatter = ax_θ.scatter([], [], s=14, color="#AAAAAA", alpha=0.7,
+                                label=r"$y=\sin(\theta)+v$")
+
+    ax_θ.legend(facecolor="black", edgecolor="white", labelcolor="white")
+
+    # =================================================
+    # ω(t)
+    # =================================================
+    ax_ω.set_xlim(0, T)
+    ax_ω.set_ylim(-6.5, 6.5)
+    ax_ω.set_ylabel(r"$\dot{\theta}$", color="white")
+    ax_ω.set_xlabel("time (s)", color="white")
+
+    ω_true_line, = ax_ω.plot([], [], "--", lw=2.6, color="#FFB000", label="True ω")
+    ω_est_line,  = ax_ω.plot([], [], "-", lw=2.2, color="white",
+                             label=f"{filter_name} mean ω")
+
+    ω_ci = ax_ω.fill_between([], [], [], color="white", alpha=0.25,
+                             label=r"$\pm 2\sigma_\omega$")
+
+    ax_ω.legend(facecolor="black", edgecolor="white", labelcolor="white")
+
+    # =================================================
+    # Pendulum
+    # =================================================
+    l_draw = 3.0
+    span = 1.3 * l_draw
+
+    ax_pend.set_xlim(-span, span)
+    ax_pend.set_ylim(-span, 0.35 * span)
+    ax_pend.set_box_aspect(1.0)
+    ax_pend.axis("off")
+
+    ax_pend.plot(0, 0, "wo", ms=5)
+    pend_line, = ax_pend.plot([], [], lw=4.2, color="white")
+    pend_mass, = ax_pend.plot([], [], "o", ms=12, color="#FF3B3B")
+
+    # =================================================
+    # Helpers
+    # =================================================
+    def fade_colors(n, rgb):
+        a = np.linspace(0.15, 1.0, n)
+        return [(rgb[0], rgb[1], rgb[2], ai) for ai in a]
+
+    true_segs, est_segs = [], []
+    max_len = 160
+
+    # =================================================
+    # Update
+    # =================================================
+    def update(k):
+        nonlocal θ_ci, ω_ci, cov_ellipse
+
+        if k > 0:
+            true_segs.append([[θ_true[k-1], ω_true[k-1]],
+                              [θ_true[k],   ω_true[k]]])
+            est_segs.append([[θ_est[k-1], ω_est[k-1]],
+                             [θ_est[k],   ω_est[k]]])
+
+            true_lc.set_segments(true_segs[-max_len:])
+            true_lc.set_color(fade_colors(len(true_segs[-max_len:]), (0, 0.9, 1)))
+
+            est_lc.set_segments(est_segs[-max_len:])
+            est_lc.set_color(fade_colors(len(est_segs[-max_len:]), (1, 1, 1)))
+
+        pt_true.set_data([θ_true[k]], [ω_true[k]])
+        pt_est.set_data([θ_est[k]],  [ω_est[k]])
+
+        cov_ellipse.remove()
+        cov_ellipse = covariance_ellipse(
+            mean=[θ_est[k], ω_est[k]],
+            cov=kf_history.covs[k],
+            ax=ax_phase,
+            edgecolor="white",
+            facecolor="none",
+            linewidth=2.4,
+            alpha=0.65
+        )
+
+        x = l_draw * np.sin(θ_true[k])
+        y = -l_draw * np.cos(θ_true[k])
+        pend_line.set_data([0, x], [0, y])
+        pend_mass.set_data([x], [y])
+
+        θ_true_line.set_data(t[:k+1], θ_true[:k+1])
+        θ_est_line.set_data(t[:k+1], θ_est[:k+1])
+
+        θ_ci.remove()
+        θ_ci = ax_θ.fill_between(
+            t[:k+1],
+            θ_est[:k+1] - 2*θ_std[:k+1],
+            θ_est[:k+1] + 2*θ_std[:k+1],
+            color="white", alpha=0.25
+        )
+
+        ω_true_line.set_data(t[:k+1], ω_true[:k+1])
+        ω_est_line.set_data(t[:k+1], ω_est[:k+1])
+
+        ω_ci.remove()
+        ω_ci = ax_ω.fill_between(
+            t[:k+1],
+            ω_est[:k+1] - 2*ω_std[:k+1],
+            ω_est[:k+1] + 2*ω_std[:k+1],
+            color="white", alpha=0.25
+        )
+
+        valid = obs_idx[obs_idx <= k]
+        meas_scatter.set_offsets(np.c_[t[valid], y_meas[:len(valid)]])
+
+        return ()
+
+    # =================================================
+    # Animate & save
+    # =================================================
+    ani = FuncAnimation(
+        fig, update, frames=N,
+        interval=slow_factor * dt * 1000,
+        blit=False
+    )
+
+    fps = int(1.0 / (slow_factor * dt))
+    ani.save(save_path, writer=PillowWriter(fps=fps))
+
+    update(N - 1)
+    plt.show()
