@@ -18,36 +18,71 @@ In robotics and dynamical systems, the true state of a system is rarely known ex
 This repository builds these ideas step by step, starting from **linear Gaussian models** and Bayesian regression, and progressing toward recursive Bayesian filters and particle-based methods. Emphasis is placed on understanding:
 - what is uncertain,
 - where that uncertainty comes from,
-- how it is propagated through time,
+- how it propagates through time,
 - and why filtering methods succeed or fail in practice.
 
-The material is developed through **formal derivations (PDFs), executable notebooks, and visualizations**, closely tied to probabilistic modeling foundations.
+The material is developed through **formal derivations (PDFs), executable notebooks, and diagnostic visualizations**, closely tied to probabilistic modeling foundations.
 
 ---
 
 ## Topics Covered (and in progress)
 
-- Linear Gaussian estimation and covariance inference
-- Batch vs recursive Bayesian regression
-- Kalman Filter (KF)
-- Extended Kalman Filter (EKF)
-- Unscented Kalman Filter (UKF)
-- Gauss–Hermite Kalman Filter
-- Particle Filtering (bootstrap and EKF/UKF-based proposals)
-- Importance sampling, weight degeneracy, ESS, and resampling
-- Practical diagnostics and failure modes
+- Linear Gaussian estimation and covariance inference  
+- Batch vs recursive Bayesian regression  
+- Kalman Filter (KF)  
+- Extended Kalman Filter (EKF)  
+- Unscented Kalman Filter (UKF)  
+- Gauss–Hermite Kalman Filter (GHKF)  
+- Particle Filtering (bootstrap and EKF/UKF-based proposals)  
+- Importance sampling, weight degeneracy, ESS, and resampling  
+- Practical diagnostics and failure modes  
 
 ---
 
-## Visualizations
+## Filtering Visualizations
 
-### Bayesian Filtering Flow
+The following animations show **Bayesian state estimation on a nonlinear pendulum**, comparing different Gaussian filtering methods.  
+Each animation overlays the true system trajectory, noisy measurements, and the filter’s estimated state evolution.
+
+### Extended Kalman Filter (EKF)
 
 <p align="center">
-  <img src="images/bayesian_filtering/filtering_flow.png" height="260">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ekf.gif" width="100%">
 </p>
 
-<p align="center"><i>Recursive Bayesian filtering as probabilistic inference over time.</i></p>
+<p align="center">
+<i>State estimation for a nonlinear pendulum using EKF. Linearization error and approximation effects are visible.</i>
+</p>
+
+---
+
+### Gauss–Hermite Kalman Filter (GHKF)
+
+<p align="center">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf3.gif" width="100%">
+  &nbsp;&nbsp;&nbsp;
+  <img src="images/bayesian_filtering/pendulum_true_vs_ghkf5.gif" width="100%">
+</p>
+
+<p align="center">
+<i>GHKF with order 3 (left) and order 5 (right), showing improved nonlinear moment approximation with higher quadrature order.</i>
+</p>
+
+---
+
+### Unscented Kalman Filter (UKF)
+
+<p align="center">
+  <img src="images/bayesian_filtering/pendulum_true_vs_ukf.gif" width="100%">
+</p>
+
+<p align="center">
+<i>UKF state estimation using sigma-point propagation for nonlinear dynamics.</i>
+</p>
+
+---
+
+These visualizations are generated directly from the filtering implementations in `src/filters` and are used to study **approximation quality, consistency, and failure modes** across methods.
 
 ---
 
@@ -120,6 +155,7 @@ Bayesian-Filtering-and-Smoothing/
 │
 ├── README.md
 └── pyproject.toml
+
 ````
 ---
 
