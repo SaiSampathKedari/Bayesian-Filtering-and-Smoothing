@@ -543,7 +543,17 @@ def animate_truth_vs_filter(
     if output_format.lower() == "gif":
         writer = PillowWriter(fps=fps)
     elif output_format.lower() == "mp4":
-        writer = FFMpegWriter(fps=fps, codec="libx264", bitrate=1800)
+        writer = FFMpegWriter(
+            fps=fps,
+            codec="libx264",
+            bitrate=1800,
+            extra_args=[
+                "-pix_fmt", "yuv420p",
+                "-vf",
+                "scale=1920:1080:force_original_aspect_ratio=decrease,"
+                "pad=1920:1080:(ow-iw)/2:(oh-ih)/2"
+            ]
+        )
     else:
         raise ValueError("output_format must be 'gif' or 'mp4'")
 
