@@ -128,6 +128,43 @@ class ParticleSet:
         self.normalize(time_index)
         i = np.argmax(self.weights[:, time_index])
         return self.particles[i, time_index]
+    
+    # --------------------------------------------------
+    # Gaussian summary of filtering distributions
+    # --------------------------------------------------
+    def to_kf_tracker(self) -> KFTracker:
+        """
+        Convert empirical filtering distributions into
+        a Gaussian moment summary over time.
+
+        Returns
+        -------
+        KFTracker
+            means[k] : E[x_k | y_{1:k}]
+            covs[k]  : Cov[x_k | y_{1:k}]
+            stds[k]  : sqrt(diag(covs[k]))
+        """
+
+        N, T, d = self.particles.shape
+
+        means = np.zeros((T, d))
+        covs  = np.zeros((T, d, d))
+        stds  = np.zeros((T, d))
+
+        for k in range(T):
+            m_k = self.mean(k)
+            C_k = self.covariance(k)
+
+            means[k] = m_k
+            covs[k]  = C_k
+            stds[k]  = np.sqrt(np.diag(C_k))
+
+        return KFTracker(
+            means=means,
+            covs=covs,
+            stds=stds
+        )
+
 
 
 
